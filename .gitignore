@@ -1,0 +1,29 @@
+# Data files (download from Kaggle separately)
+youtube_data/
+archive*/
+USvideos_deduped.csv
+
+# Generated outputs
+*.png
+*.npz
+*.txt
+run_log.txt
+phase7_conclusion_*.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.toc
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+
+# OS
+.DS_Store
+Thumbs.db
