@@ -1,13 +1,8 @@
-# Data files (download from Kaggle separately)
-youtube_data/
-archive*/
-USvideos_deduped.csv
+# Raw data (too large for git, download from Kaggle separately)
+youtube_data/USvideos.csv
 
 # Generated outputs
-*.png
 *.npz
-*.txt
-run_log.txt
 phase7_conclusion_*.txt
 
 # Python cache

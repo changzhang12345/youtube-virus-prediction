@@ -1,0 +1,276 @@
+============================================================
+PHASE 1: Data Loading & Exploration
+============================================================
+
+Dataset shape: (40949, 16)
+
+Columns: ['video_id', 'trending_date', 'title', 'channel_title', 'category_id', 'publish_time', 'tags', 'views', 'likes', 'dislikes', 'comment_count', 'thumbnail_link', 'comments_disabled', 'ratings_disabled', 'video_error_or_removed', 'description']
+
+Data types:
+video_id                  object
+trending_date             object
+title                     object
+channel_title             object
+category_id                int64
+publish_time              object
+tags                      object
+views                      int64
+likes                      int64
+dislikes                   int64
+comment_count              int64
+thumbnail_link            object
+comments_disabled           bool
+ratings_disabled            bool
+video_error_or_removed      bool
+description               object
+dtype: object
+
+First 5 rows:
+      video_id trending_date  ... video_error_or_removed                                        description
+0  2kyS6SvSYSE      17.14.11  ...                  False  SHANTELL'S CHANNEL - https://www.youtube.com/s...
+1  1ZAPwfrtAFY      17.14.11  ...                  False  One year after the presidential election, John...
+2  5qpjK5DgCt4      17.14.11  ...                  False  WATCH MY PREVIOUS VIDEO â¶ \n\nSUBSCRIBE âº ...
+3  puqaWrEC7tY      17.14.11  ...                  False  Today we find out if Link is a Nickelback amat...
+4  d380meD0W0M      17.14.11  ...                  False  I know it's been a while since we did this sho...
+
+[5 rows x 16 columns]
+
+Missing values:
+video_id                    0
+trending_date               0
+title                       0
+channel_title               0
+category_id                 0
+publish_time                0
+tags                        0
+views                       0
+likes                       0
+dislikes                    0
+comment_count               0
+thumbnail_link              0
+comments_disabled           0
+ratings_disabled            0
+video_error_or_removed      0
+description               570
+dtype: int64
+
+Deduplication: 40949 rows → 6351 rows (34598 duplicates removed)
+Saved: USvideos_deduped.csv
+
+Viral threshold (80th percentile views): 933,053
+
+Viral distribution:
+viral
+0    5080
+1    1271
+Name: count, dtype: int64
+Viral rate: 20.01%
+
+Category mapping:
+{1: 'Film & Animation', 2: 'Autos & Vehicles', 10: 'Music', 15: 'Pets & Animals', 17: 'Sports', 18: 'Short Movies', 19: 'Travel & Events', 20: 'Gaming', 21: 'Videoblogging', 22: 'People & Blogs', 23: 'Comedy', 24: 'Entertainment', 25: 'News & Politics', 26: 'Howto & Style', 27: 'Education', 28: 'Science & Technology', 29: 'Nonprofits & Activism', 30: 'Movies', 31: 'Anime/Animation', 32: 'Action/Adventure', 33: 'Classics', 34: 'Comedy', 35: 'Documentary', 36: 'Drama', 37: 'Family', 38: 'Foreign', 39: 'Horror', 40: 'Sci-Fi/Fantasy', 41: 'Thriller', 42: 'Shorts', 43: 'Shows', 44: 'Trailers'}
+
+Viral rate by category:
+category_name
+Gaming                   0.407767
+Film & Animation         0.311321
+Comedy                   0.281536
+Music                    0.267835
+Entertainment            0.220506
+People & Blogs           0.208835
+Sports                   0.206208
+Science & Technology     0.152632
+Nonprofits & Activism    0.142857
+Howto & Style            0.137815
+Autos & Vehicles         0.128571
+Education                0.080000
+News & Politics          0.055446
+Pets & Animals           0.050725
+Travel & Events          0.033333
+Shows                    0.000000
+Name: viral, dtype: float64
+
+Saved: phase1_viral_rate_by_category.png
+
+============================================================
+PHASE 2: Feature Engineering
+============================================================
+After dropping missing: (6351, 18)
+
+New features sample:
+                                               title  publish_hour  ...  tag_count  desc_length
+0                 WE WANT TO TALK ABOUT OUR MARRIAGE            17  ...          1         1410
+1  The Trump Presidency: Last Week Tonight with J...             7  ...          4          630
+2  Racist Superman | Rudy Mancuso, King Bach & Le...            19  ...         23         1181
+3                   Nickelback Lyrics: Real or Fake?            11  ...         27         1407
+4                           I Dare You: GOING BALD!?            18  ...         14          636
+
+[5 rows x 8 columns]
+
+Loading sentence-transformer model (all-MiniLM-L6-v2)...
+Encoding train titles+tags...
+Encoding test titles+tags...
+
+Embedding dim: 384
+Structured train shape: (4445, 9)
+Full train shape:       (4445, 393)
+Full test shape:        (1906, 393)
+
+Train size: 4445, Test size: 1906
+Train viral rate: 20.02%, Test viral rate: 19.99%
+
+============================================================
+PHASE 3: Experiment 1 — Logistic Regression Baseline
+============================================================
+Fitting 5 folds for each of 5 candidates, totalling 25 fits
+
+Best LR parameters: {'C': 0.1}
+Best CV F1: 0.3703
+
+LR Baseline (Structured Features) Results:
+  Accuracy:  0.5808
+  Precision: 0.2547
+  Recall:    0.5696
+  F1-Score:  0.3520
+  ROC-AUC:   0.5989
+
+Confusion Matrix:
+[[890 635]
+ [164 217]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.84      0.58      0.69      1525
+           1       0.25      0.57      0.35       381
+
+    accuracy                           0.58      1906
+   macro avg       0.55      0.58      0.52      1906
+weighted avg       0.73      0.58      0.62      1906
+
+
+Top 10 feature weights (LR):
+  category_id                   : -0.3082
+  tag_count                     : +0.2358
+  title_word_count              : -0.1778
+  publish_weekday               : +0.1642
+  desc_length                   : +0.1192
+  title_has_exclaim             : +0.1115
+  title_has_question            : -0.0658
+  publish_hour                  : -0.0593
+  title_length                  : +0.0011
+
+Saved: phase3_lr_baseline.png
+
+============================================================
+PHASE 4: Experiment 2 — Kernel SVM (Structured + Embeddings)
+============================================================
+Applying PCA (100 components) to full feature matrix...
+PCA explained variance (100 components): 97.33%
+Fitting 5 folds for each of 9 candidates, totalling 45 fits
+
+Best SVM parameters: {'C': 10, 'gamma': 0.1}
+Best CV F1: 0.4572
+
+Kernel SVM (Structured + Embeddings + PCA) Results:
+  Accuracy:  0.7319
+  Precision: 0.3755
+  Recall:    0.5144
+  F1-Score:  0.4341
+  ROC-AUC:   0.7106
+
+Confusion Matrix:
+[[1199  326]
+ [ 185  196]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.87      0.79      0.82      1525
+           1       0.38      0.51      0.43       381
+
+    accuracy                           0.73      1906
+   macro avg       0.62      0.65      0.63      1906
+weighted avg       0.77      0.73      0.75      1906
+
+
+Saved: phase4_svm_comparison.png
+
+F1 improvement (LR → SVM): 0.0821 (23.3%)
+AUC improvement (LR → SVM): 0.1117 (18.7%)
+
+============================================================
+PHASE 5: Experiment 3 — PCA Visualization
+============================================================
+PCA 3D explained variance: PC1=20.64%, PC2=15.27%, PC3=10.40%, Total=46.32%
+Saved: phase5_pca3d_overall.png
+Saved: phase5_pca3d_by_category.png
+Saved: phase5_pca2d_by_category.png
+
+============================================================
+PHASE 6: Experiment 4 — Cross-Category Generalization
+============================================================
+Top 4 categories: {24: 'Entertainment', 10: 'Music', 26: 'Howto & Style', 23: 'Comedy'}
+
+Encoding all texts for cross-category analysis...
+
+Model A: Mixed training (all categories)...
+  Model A — Entertainment            : F1 = 0.6564
+  Model A — Music                    : F1 = 0.7126
+  Model A — Howto & Style            : F1 = 0.6429
+  Model A — Comedy                   : F1 = 0.6864
+
+Model B: Category-specific training...
+  Train=Entertainment        → Test=Entertainment       : F1=0.8168
+  Train=Entertainment        → Test=Music               : F1=0.2982
+  Train=Entertainment        → Test=Howto & Style       : F1=0.1946
+  Train=Entertainment        → Test=Comedy              : F1=0.2776
+  Train=Music                → Test=Entertainment       : F1=0.0950
+  Train=Music                → Test=Music               : F1=0.8636
+  Train=Music                → Test=Howto & Style       : F1=0.0215
+  Train=Music                → Test=Comedy              : F1=0.2315
+  Train=Howto & Style        → Test=Entertainment       : F1=0.1451
+  Train=Howto & Style        → Test=Music               : F1=0.0000
+  Train=Howto & Style        → Test=Howto & Style       : F1=0.8770
+  Train=Howto & Style        → Test=Comedy              : F1=0.0884
+  Train=Comedy               → Test=Entertainment       : F1=0.2512
+  Train=Comedy               → Test=Music               : F1=0.2048
+  Train=Comedy               → Test=Howto & Style       : F1=0.1789
+  Train=Comedy               → Test=Comedy              : F1=0.8772
+
+F1 Matrix:
+               Entertainment     Music  Howto & Style    Comedy
+Entertainment       0.816766  0.298246       0.194595  0.277580
+Music               0.095023  0.863636       0.021505  0.231481
+Howto & Style       0.145055  0.000000       0.877005  0.088398
+Comedy              0.251192  0.204778       0.178947  0.877193
+
+In-domain average F1:    0.8587
+Cross-domain average F1: 0.1656
+Drop in F1 (in→cross):   0.6931
+
+Saved: phase6_cross_category_heatmap.png
+
+============================================================
+PHASE 7: Final Summary Report
+============================================================
+
+================================================================================
+Model                               Features                     Acc   Prec    Rec     F1    AUC
+================================================================================
+LR Baseline (Structured Features)   Structured                 0.581  0.255  0.570  0.352  0.599
+Kernel SVM (Structured + Embeddings + PCA) Struct+Embeddings          0.732  0.375  0.514  0.434  0.711
+================================================================================
+
+Key Findings:
+  F1 improvement (LR → SVM):      +0.0821 (+23.3%)
+  AUC improvement (LR → SVM):     +0.1117 (+18.7%)
+  In-domain average F1:           0.8587
+  Cross-domain average F1:        0.1656
+  In-domain → Cross-domain drop:  0.6931
+
+Saved: phase7_final_summary.png
+
+============================================================
+All phases complete! Output files saved to:
+  G:\intro to ML\final\project
+============================================================

@@ -60,11 +60,12 @@ examples.  Two models are compared: a Logistic Regression baseline trained on
 nine structured features, and an RBF Kernel SVM trained on the same structured
 features augmented with 384-dimensional sentence embeddings of the video title
 and tags.  The SVM achieves an AUC of 0.711 and an F1 score of 0.434, compared
-to 0.599 and 0.352 for the baseline, confirming that semantic content provides
+to 0.599 and 0.352 for the baseline, suggesting that semantic content provides
 meaningful additional predictive signal.  Analysis of the Logistic Regression
 coefficients reveals that tag count and the presence of exclamation marks in
 the title are strong positive predictors, while question marks are negative,
-suggesting that emotionally-driven titles outperform informational ones.  A
+suggesting that emotionally-driven titles are associated with higher viral rates
+than informational ones.  A
 cross-category generalization experiment further reveals that viral patterns are
 strongly category-specific, with in-domain F1 averaging 0.859 and cross-domain
 F1 averaging 0.166, a finding that points toward category-aware modeling as a
@@ -73,6 +74,7 @@ natural direction for future work.
 \noindent\textbf{Keywords:} viral prediction, sentence embeddings, logistic regression, kernel SVM, PCA
 
 \vspace{1em}
+\newpage
 \tableofcontents
 \newpage
 
@@ -84,8 +86,8 @@ interest to content creators, platform operators, and marketers.  Most
 approaches to this problem rely on post-publication engagement signals such as
 view counts, likes, and comment volume --- metrics that are only observable
 after a video has already been released and seen by an audience.  This project
-poses a stricter and more realistic question: \textit{can we predict virality
-using only information that exists at the moment of upload?}
+poses a stricter and more realistic question: can we predict virality
+using only information that exists at the moment of upload?
 
 The features considered are limited to the video title, tags, publish
 timestamp, content category, and description length, all of which are
@@ -94,7 +96,7 @@ dislikes, comment count) are explicitly excluded as model inputs; view counts
 are used solely to construct the binary viral label.
 
 Beyond the core prediction task, the project investigates a second question:
-\textit{do viral patterns generalize across content categories?}  A model
+do viral patterns generalize across content categories?  A model
 trained on Entertainment videos may have learned patterns specific to that genre.
 Testing whether those patterns transfer to Music or Comedy reveals
 whether virality is a universal phenomenon or a category-specific one --- a
@@ -403,11 +405,12 @@ one non-viral video drawn at random, the model ranks the viral one higher
 71.1\% of the time --- a meaningful result given that the prediction relies
 solely on pre-publication information.
 
-The gap between the two models isolates the contribution of semantic content:
-the structured features alone (AUC 0.599) capture operational signals such as
-category, tag count, and timing, while the sentence embeddings additionally
-capture \textit{what} the title says, providing an 18.7\% AUC gain that
-cannot be attributed to model flexibility alone.
+The gap between the two models suggests that semantic content contributes useful
+predictive signal, although a stricter ablation study would be needed to fully
+separate the effect of embeddings from the effect of the more flexible nonlinear
+SVM model.  The structured features alone (AUC 0.599) capture operational
+signals such as category, tag count, and timing, while the full model
+additionally encodes \textit{what} the title says.
 
 Figure~\ref{fig:svm} shows the ROC comparison, SVM confusion matrix, and a
 side-by-side metric bar chart.
@@ -424,7 +427,7 @@ side-by-side metric bar chart.
 \subsection{Experiment 3 --- PCA Visualization}
 
 Projecting the 393-dimensional training features to 3 principal components
-retains approximately 44\% of total variance.  The dense, high-rank structure
+retains 46.3\% of total variance (PC1: 20.6\%, PC2: 15.3\%, PC3: 10.4\%).  The dense, high-rank structure
 of sentence embeddings means that no small number of principal components can
 capture the full feature space, so some class overlap in the projected view is
 expected.  Figure~\ref{fig:pca_overall} shows the 3D projection from two
@@ -436,17 +439,12 @@ concentrated in just two or three directions.
 
 \begin{figure}[H]
   \centering
-  \begin{subfigure}[b]{0.48\textwidth}
-    \includegraphics[width=\textwidth]{phase5_pca3d_overall_a.png}
-  \end{subfigure}
-  \hfill
-  \begin{subfigure}[b]{0.48\textwidth}
-    \includegraphics[width=\textwidth]{phase5_pca3d_overall_b.png}
-  \end{subfigure}
-  \caption{PCA 3D projection of the full training set from two viewing angles.
-           Orange points are viral videos; blue points are a subsample of
-           1,500 non-viral videos.  The two classes overlap but viral videos
-           cluster preferentially toward one end of PC1.}
+  \includegraphics[width=0.78\textwidth]{phase5_pca3d_overall.png}
+  \caption{PCA 3D projection of the full training set shown from two viewing
+           angles.  Orange points are viral videos; blue points are a subsample
+           of 1,200 non-viral videos (low opacity to serve as background).
+           The two classes overlap considerably but viral videos are not
+           uniformly distributed across the space.}
   \label{fig:pca_overall}
 \end{figure}
 
@@ -495,24 +493,30 @@ whether a track will trend.  The finding is not that the models are weak --- on
 their own categories they perform very well --- but that the concept of
 ``viral'' has a different linguistic fingerprint in each genre.
 
+The higher in-domain F1 scores in this experiment should be interpreted
+carefully: each category-specific model is trained and evaluated on a narrower
+within-genre distribution, which may be an easier task than the global
+held-out test setting.  The in-domain F1 of 0.859 thus reflects within-category
+predictability rather than an improvement over the global model.
+
 % ── 6. Discussion ─────────────────────────────────────────────────────────────
 \section{Discussion}
 
 \textbf{Viral video prediction from pre-publication features is feasible.}
 The Kernel SVM achieves an AUC of 0.711 using only pre-publication information
 --- no view counts, likes, or any post-publication engagement signal.  This
-places the result in the middle-to-upper range of published results on similar
-tasks, where AUCs of 0.65--0.75 are typical given the inherent randomness of
-viral spread.  The structured-only baseline (AUC 0.599) already exceeds chance
-meaningfully, and the addition of semantic embeddings pushes performance
-substantially higher.
+performance is reasonable for a noisy social-media prediction task, especially
+given that the model relies solely on pre-publication information.  The
+structured-only baseline (AUC 0.599) already exceeds chance meaningfully, and
+the addition of semantic embeddings pushes performance substantially higher.
 
-\textbf{Semantic content is the strongest marginal contributor.}  The 18.7\%
-AUC gain from adding sentence embeddings demonstrates that \textit{what} a
-creator writes in their title and tags carries predictive signal beyond timing
-and category.  This is an actionable finding: title wording is a concrete lever
-available to creators before publication, and optimizing it may meaningfully
-increase reach.
+\textbf{Semantic content contributes meaningful predictive signal.}  The 18.7\%
+AUC gain from adding sentence embeddings suggests that \textit{what} a creator
+writes in their title and tags carries predictive signal beyond timing and
+category, though a full ablation study separating embedding contribution from
+model flexibility would be needed to confirm this precisely.  Title wording is
+a concrete lever available to creators before publication, and optimizing it
+may help improve predicted reach.
 
 \textbf{Operational features reveal creator professionalism.}  Among the
 structured features, tag count and description length are the second and fifth
@@ -540,6 +544,12 @@ what makes a Comedy title go viral has little in common with what makes a Music
 video trend.  Knowing this guides how future systems should be built ---
 with separate, category-aware models rather than a single one-size-fits-all
 classifier.
+
+\textbf{Limitations.}  The category identifier is treated as a raw integer
+rather than one-hot encoded, which imposes an arbitrary ordinal structure on a
+nominal variable; one-hot encoding would be more principled.  Additionally,
+the dataset covers only US trending videos from a limited time window, which
+may limit generalizability to other regions or periods.
 
 \textbf{Future directions.}  Natural extensions include training dedicated
 per-category models to leverage the strong in-domain performance observed here,

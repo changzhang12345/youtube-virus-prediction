@@ -368,45 +368,47 @@ print("PHASE 5: Experiment 3 — PCA Visualization")
 print("=" * 60)
 
 # PCA to 3D on full training set
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
-
 pca2d = PCA(n_components=3, random_state=42)
 X_2d_train = pca2d.fit_transform(X_full_train)
-print(f"PCA 3D explained variance: PC1={pca2d.explained_variance_ratio_[0]:.2%}, "
-      f"PC2={pca2d.explained_variance_ratio_[1]:.2%}, "
-      f"PC3={pca2d.explained_variance_ratio_[2]:.2%}, "
-      f"Total={pca2d.explained_variance_ratio_.sum():.2%}")
+ev = pca2d.explained_variance_ratio_
+print(f"PCA 3D explained variance: PC1={ev[0]:.2%}, PC2={ev[1]:.2%}, "
+      f"PC3={ev[2]:.2%}, Total={ev.sum():.2%}")
 
-# Separate viral / non-viral
-viral_mask    = (y_train == 1)
-nonviral_mask = (y_train == 0)
-
-# Subsample non-viral for plotting
+# Subsample non-viral for cleaner plot
 rng = np.random.default_rng(42)
-nv_idx = rng.choice(np.where(nonviral_mask)[0], size=min(1500, nonviral_mask.sum()), replace=False)
-v_idx  = np.where(viral_mask)[0]
+nonviral_idx = np.where(y_train == 0)[0]
+viral_idx    = np.where(y_train == 1)[0]
+nv_idx = rng.choice(nonviral_idx, size=min(1200, len(nonviral_idx)), replace=False)
+v_idx  = viral_idx
 
-# Plot 3D from two viewing angles
-for elev, azim, suffix in [(20, 45, 'a'), (20, 225, 'b')]:
-    fig = plt.figure(figsize=(11, 8))
-    ax3d = fig.add_subplot(111, projection='3d')
-    ax3d.scatter(X_2d_train[nv_idx, 0], X_2d_train[nv_idx, 1], X_2d_train[nv_idx, 2],
-                 c='steelblue', alpha=0.2, s=8, label=f'Non-viral (n={len(nv_idx)})')
-    ax3d.scatter(X_2d_train[v_idx, 0], X_2d_train[v_idx, 1], X_2d_train[v_idx, 2],
-                 c='darkorange', alpha=0.5, s=12, label=f'Viral (n={len(v_idx)})')
-    ax3d.set_xlabel(f'PC1 ({pca2d.explained_variance_ratio_[0]:.1%})', labelpad=6)
-    ax3d.set_ylabel(f'PC2 ({pca2d.explained_variance_ratio_[1]:.1%})', labelpad=6)
-    ax3d.set_zlabel(f'PC3 ({pca2d.explained_variance_ratio_[2]:.1%})', labelpad=6)
-    ax3d.set_title('PCA 3D Projection: Viral vs Non-viral Videos',
-                   fontsize=13, fontweight='bold')
-    ax3d.view_init(elev=elev, azim=azim)
-    ax3d.legend(fontsize=10)
-    plt.tight_layout()
-    plt.savefig(f"{OUT_DIR}/phase5_pca3d_overall_{suffix}.png", dpi=150)
-    plt.close()
-    print(f"Saved: phase5_pca3d_overall_{suffix}.png")
+# Two viewing angles side by side — helps show 3D structure in static image
+fig = plt.figure(dpi=150, figsize=(14, 6))
+fig.suptitle('PCA 3D Projection: Viral vs Non-viral Videos', fontsize=13, fontweight='bold')
 
-# Per-category PCA (4 categories) — 3D
+for i, (elev, azim) in enumerate([(20, 30), (20, 200)], 1):
+    ax = fig.add_subplot(1, 2, i, projection='3d')
+    # Non-viral as subtle background
+    Z_nv = X_2d_train[nv_idx]
+    ax.scatter(Z_nv[:, 0], Z_nv[:, 1], Z_nv[:, 2],
+               color='steelblue', alpha=0.12, s=6, label=f'Non-viral (n={len(nv_idx)})')
+    # Viral highlighted on top
+    Z_v = X_2d_train[v_idx]
+    ax.scatter(Z_v[:, 0], Z_v[:, 1], Z_v[:, 2],
+               color='darkorange', alpha=0.55, s=14, label=f'Viral (n={len(v_idx)})',
+               zorder=5)
+    ax.set_xlabel(f'PC1 ({ev[0]:.1%})', fontsize=8, labelpad=4)
+    ax.set_ylabel(f'PC2 ({ev[1]:.1%})', fontsize=8, labelpad=4)
+    ax.set_zlabel(f'PC3 ({ev[2]:.1%})', fontsize=8, labelpad=4)
+    ax.view_init(elev=elev, azim=azim)
+    ax.legend(loc='upper left', fontsize=8)
+    ax.set_title(f'View {i} (azim={azim}°)', fontsize=9)
+
+plt.tight_layout()
+plt.savefig(f"{OUT_DIR}/phase5_pca3d_overall.png", dpi=150, bbox_inches='tight')
+plt.close()
+print("Saved: phase5_pca3d_overall.png")
+
+# Per-category 3D scatter (2x2)
 df_train = df.iloc[idx_train].copy()
 df_train['_pc1'] = X_2d_train[:, 0]
 df_train['_pc2'] = X_2d_train[:, 1]
@@ -414,32 +416,30 @@ df_train['_pc3'] = X_2d_train[:, 2]
 df_train['_viral'] = y_train
 
 target_cats = {20: 'Gaming', 10: 'Music', 24: 'Entertainment', 28: 'Science & Technology'}
-fig = plt.figure(figsize=(16, 12))
+fig = plt.figure(dpi=150, figsize=(14, 10))
+fig.suptitle('PCA 3D by Category: Viral vs Non-viral')
 
 for idx_cat, (cat_id, cat_name) in enumerate(target_cats.items(), 1):
-    ax3d = fig.add_subplot(2, 2, idx_cat, projection='3d')
+    ax = fig.add_subplot(2, 2, idx_cat, projection='3d')
     subset = df_train[df_train['category_id'] == cat_id]
     if len(subset) == 0:
-        ax3d.set_title(f'{cat_name} — no data')
+        ax.set_title(f'{cat_name} — no data')
         continue
 
-    nv = subset[subset['_viral'] == 0]
-    vv = subset[subset['_viral'] == 1]
-    nv_plot = nv.sample(min(400, len(nv)), random_state=42)
+    for viral_val, label, color in [(0, 'Non-viral', 'tab:blue'), (1, 'Viral', 'tab:orange')]:
+        pts = subset[subset['_viral'] == viral_val]
+        if viral_val == 0:
+            pts = pts.sample(min(400, len(pts)), random_state=42)
+        ax.scatter(pts['_pc1'], pts['_pc2'], pts['_pc3'],
+                   color=color, label=f'{label} ({len(subset[subset["_viral"]==viral_val])})',
+                   alpha=0.2, s=8)
 
-    ax3d.scatter(nv_plot['_pc1'], nv_plot['_pc2'], nv_plot['_pc3'],
-                 c='steelblue', alpha=0.25, s=8, label=f'Non-viral ({len(nv)})')
-    ax3d.scatter(vv['_pc1'], vv['_pc2'], vv['_pc3'],
-                 c='darkorange', alpha=0.6, s=12, label=f'Viral ({len(vv)})')
-    ax3d.set_title(f'{cat_name}', fontweight='bold', fontsize=10)
-    ax3d.set_xlabel('PC1', fontsize=7, labelpad=2)
-    ax3d.set_ylabel('PC2', fontsize=7, labelpad=2)
-    ax3d.set_zlabel('PC3', fontsize=7, labelpad=2)
-    ax3d.tick_params(labelsize=6)
-    ax3d.legend(fontsize=7)
-    ax3d.view_init(elev=20, azim=45)
+    ax.legend(loc='best', fontsize=7)
+    ax.set_xlabel('PC1')
+    ax.set_ylabel('PC2')
+    ax.set_zlabel('PC3')
+    ax.set_title(cat_name, fontweight='bold')
 
-plt.suptitle('PCA 3D by Category: Viral vs Non-viral', fontsize=14, fontweight='bold')
 plt.tight_layout()
 plt.savefig(f"{OUT_DIR}/phase5_pca3d_by_category.png", dpi=150, bbox_inches='tight')
 plt.close()
