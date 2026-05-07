@@ -50,7 +50,7 @@ project/
 python youtube_viral_prediction.py --fast
 ```
 
-### Full run (~30-60 minutes)
+### Full run (~20 minutes)
 
 ```bash
 python youtube_viral_prediction.py
