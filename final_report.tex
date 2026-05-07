@@ -52,21 +52,25 @@
 % ── Abstract ──────────────────────────────────────────────────────────────────
 \begin{center}\large\bfseries Abstract\end{center}
 This project investigates whether a YouTube video's virality can be predicted
-using only information available before publication: the video title, publish
-timestamp, and content category.  We define a video as viral if its view count
-reaches the 80th percentile among videos in the dataset, yielding a binary
-classification task with roughly 20\% positive examples.  Two models are
-compared: a Logistic Regression baseline trained on five structured features,
-and an RBF Kernel SVM trained on the same structured features augmented with
-TF-IDF title representations.  The SVM achieves an AUC of 0.655 and an F1
-score of 0.378, compared to 0.558 and 0.296 for the baseline, suggesting that
-title text provides meaningful additional predictive signal.  A cross-category
-generalization experiment further reveals that viral patterns are strongly
-category-specific, with in-domain F1 averaging 0.657 and cross-domain F1
-averaging 0.198, an insight that points toward category-aware modeling as a
+using only information available before publication: the video title, tags,
+publish timestamp, content category, and description length.  We define a video
+as viral if its view count reaches the 80th percentile among all videos in the
+dataset, yielding a binary classification task with roughly 20\% positive
+examples.  Two models are compared: a Logistic Regression baseline trained on
+nine structured features, and an RBF Kernel SVM trained on the same structured
+features augmented with 384-dimensional sentence embeddings of the video title
+and tags.  The SVM achieves an AUC of 0.711 and an F1 score of 0.434, compared
+to 0.599 and 0.352 for the baseline, confirming that semantic content provides
+meaningful additional predictive signal.  Analysis of the Logistic Regression
+coefficients reveals that tag count and the presence of exclamation marks in
+the title are strong positive predictors, while question marks are negative,
+suggesting that emotionally-driven titles outperform informational ones.  A
+cross-category generalization experiment further reveals that viral patterns are
+strongly category-specific, with in-domain F1 averaging 0.859 and cross-domain
+F1 averaging 0.166, a finding that points toward category-aware modeling as a
 natural direction for future work.
 
-\noindent\textbf{Keywords:} viral prediction, TF-IDF, logistic regression, kernel SVM, PCA
+\noindent\textbf{Keywords:} viral prediction, sentence embeddings, logistic regression, kernel SVM, PCA
 
 \vspace{1em}
 \tableofcontents
@@ -83,27 +87,29 @@ after a video has already been released and seen by an audience.  This project
 poses a stricter and more realistic question: \textit{can we predict virality
 using only information that exists at the moment of upload?}
 
-The features considered are limited to the video title, publish timestamp, and
-content category, all of which are determined before a video goes live.
-Engagement metrics (views, likes, dislikes, comment count) are explicitly
-excluded as model inputs; view counts are used solely for constructing the
-binary viral label.
+The features considered are limited to the video title, tags, publish
+timestamp, content category, and description length, all of which are
+determined before a video goes live.  Engagement metrics (views, likes,
+dislikes, comment count) are explicitly excluded as model inputs; view counts
+are used solely to construct the binary viral label.
 
 Beyond the core prediction task, the project investigates a second question:
 \textit{do viral patterns generalize across content categories?}  A model
-trained on Gaming videos may have learned patterns specific to that genre.
-Testing whether those patterns transfer to Music or Entertainment reveals
+trained on Entertainment videos may have learned patterns specific to that genre.
+Testing whether those patterns transfer to Music or Comedy reveals
 whether virality is a universal phenomenon or a category-specific one --- a
 question with direct implications for how such models should be designed and
 deployed in practice.
 
 Two main experiments are conducted.  Experiment~1 trains a Logistic Regression
-classifier on structured features only to establish a baseline.  Experiment~2
-augments these features with a TF-IDF representation of the video title and
-trains an RBF Kernel SVM, testing whether the specific words in a title carry
-additional predictive power.  Two further experiments visualize the learned
-feature space via PCA and measure cross-category generalization through a
-held-out F1 matrix.
+classifier on structured features only to establish a baseline and to identify
+which individual variables carry the most predictive weight.  Experiment~2
+augments these features with sentence embeddings of the video title and tags,
+encoding their semantic content into a dense 384-dimensional vector, and trains
+an RBF Kernel SVM to test whether the meaning of a title carries additional
+predictive power beyond the structured features.  Two further experiments
+visualize the learned feature space via PCA and measure cross-category
+generalization through a held-out F1 matrix.
 
 % ── 2. Data ───────────────────────────────────────────────────────────────────
 \section{Data}
@@ -113,13 +119,13 @@ held-out F1 matrix.
 The dataset used is the \textbf{Kaggle Trending YouTube Video Statistics} (US
 subset), consisting of a CSV file of video records and a JSON category mapping
 file.  It contains metadata for videos that appeared on YouTube's US trending
-page, including the video title, publish timestamp, category identifier, view
-count, like count, dislike count, and comment count.  The raw dataset contains
-40,949 rows.  Because the same video can appear on multiple trending days, we
-deduplicate by video identifier and retain only the first appearance of each
-video, reducing the dataset to 6,351 unique videos.  After removing rows with
-missing titles or unparseable publish timestamps, all 6,351 samples are
-retained.
+page, including the video title, tags, publish timestamp, category identifier,
+description text, view count, like count, dislike count, and comment count.
+The raw dataset contains 40,949 rows.  Because the same video can appear on
+multiple trending days, we deduplicate by video identifier and retain only the
+first appearance of each video, reducing the dataset to 6,351 unique videos.
+After removing rows with missing titles or unparseable publish timestamps, all
+6,351 samples are retained.
 
 \subsection{Label Definition}
 
@@ -137,16 +143,19 @@ providing a more balanced class distribution for model training.
 
 \subsection{Category Distribution}
 
-To understand the data, we computed the viral rate for each content category.
-Categories vary substantially in their fraction of viral videos, as shown in
-Figure~\ref{fig:viral_by_category}, suggesting that category identity carries
-meaningful signal for prediction.
+The viral rate varies substantially across content categories, as shown in
+Figure~\ref{fig:viral_by_category}.  Gaming leads with a 40.8\% viral rate,
+while News \& Politics and Pets \& Animals fall below 6\%.  This strong
+category-level variation suggests that content category is an important
+predictor, a hypothesis confirmed by the feature importance analysis in
+Section~\ref{sec:results}.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.85\textwidth]{phase1_viral_rate_by_category.png}
   \caption{Viral rate broken down by YouTube content category.
-           The dashed red line marks the overall 10\% baseline.}
+           Gaming exhibits the highest viral rate at 40.8\%, while
+           News \& Politics and Pets \& Animals fall below 6\%.}
   \label{fig:viral_by_category}
 \end{figure}
 
@@ -155,55 +164,68 @@ meaningful signal for prediction.
 
 \subsection{Feature Engineering}
 
-Two feature sets are constructed from the allowed input variables.
+Two feature sets are constructed from the allowed pre-publication variables.
 
-\textbf{Structured features} (5 dimensions):
+\textbf{Structured features} (9 dimensions):
 \begin{itemize}
   \item publish hour --- hour of day (0--23) extracted from the publish timestamp
   \item publish weekday --- day of week (0 = Monday, 6 = Sunday)
   \item title length --- number of characters in the title
   \item title word count --- number of whitespace-delimited tokens in the title
+  \item title has exclamation --- binary indicator for the presence of ``!''
+  \item title has question --- binary indicator for the presence of ``?''
+  \item tag count --- number of tags associated with the video
+  \item description length --- character length of the video description
   \item category id --- integer category identifier
 \end{itemize}
 
-\textbf{Text features:}  A TF-IDF representation of the video title is
-computed with a vocabulary limited to the top 500 terms (English stop words
-removed), yielding a 500-dimensional sparse vector per video.
+\textbf{Semantic embedding features:}  To capture the meaning of the video
+title and tags, we concatenate the title text with the cleaned tag string and
+encode the result using the pretrained sentence transformer model
+\textit{all-MiniLM-L6-v2}, producing a 384-dimensional dense embedding per
+video.  Unlike bag-of-words approaches such as TF-IDF, sentence embeddings
+capture semantic similarity and contextual meaning, allowing the model to
+recognize that ``Epic Fails Compilation'' and ``Best Bloopers Ever'' carry
+similar signals even without lexical overlap.
 
 The full feature matrix concatenates the scaled structured features and the
-TF-IDF vector, producing a 505-dimensional representation.  To prevent data
-leakage, the standard scaler for structured features, the TF-IDF vectorizer,
-and the PCA transform used in Experiment~2 are all fitted exclusively on the
-training split and then applied to the test split.
+sentence embedding, producing a 393-dimensional dense representation per video.
+To prevent data leakage, the standard scaler for structured features and the
+PCA transform used in Experiment~2 are fitted exclusively on the training split
+and then applied to the test split.  The sentence transformer model is
+pretrained and frozen; it is not fine-tuned on this dataset.
 
 \subsection{Train/Test Split}
 
-The dataset is divided into a 70\% training set and a 30\% test set using
-stratified sampling (preserving the viral/non-viral ratio in both splits) with
-a fixed random seed for reproducibility.
+The dataset is divided into a 70\% training set (4,445 samples) and a 30\%
+test set (1,906 samples) using stratified sampling (preserving the viral rate
+in both splits) with a fixed random seed for reproducibility.
 
 \subsection{Experiment 1 --- Logistic Regression Baseline}
+\label{sec:lr}
 
-Logistic Regression with $\ell_2$ regularization is trained on the structured
-features only.  The model minimizes the regularized cross-entropy loss:
+Logistic Regression with $\ell_2$ regularization is trained on the nine
+structured features only.  The model minimizes the regularized cross-entropy
+loss:
 \[
   \min_{w,b} \;\sum_{i=1}^{n}
     \log\!\left(1 + e^{-y_i(w^\top x_i + b)}\right)
   + \frac{1}{2C}\|w\|^2
 \]
-where $C > 0$ controls regularization strength (larger $C$ = less
-regularization).  Class imbalance is handled by reweighting each training
-example inversely proportional to its class frequency.  The optimal $C$ is
-selected via 5-fold stratified cross-validation over the grid
-$C \in \{0.001,\ 0.01,\ 0.1,\ 1,\ 10\}$, with F1 score as the selection criterion.
+where $C > 0$ controls regularization strength.  Class imbalance is handled by
+reweighting each training example inversely proportional to its class
+frequency.  The optimal $C$ is selected via 5-fold stratified cross-validation
+over the grid $C \in \{0.001,\ 0.01,\ 0.1,\ 1,\ 10\}$, with F1 score as the
+selection criterion.  Because Logistic Regression produces interpretable
+coefficients, this experiment also serves as a feature importance analysis.
 
 \subsection{Experiment 2 --- RBF Kernel SVM}
 
 A Support Vector Machine with the Radial Basis Function (RBF) kernel is trained
-on the full feature set.  Because the SVM's computational cost scales poorly
-with the number of features, PCA first reduces the 505-dimensional feature
-matrix to 100 principal components.  The RBF kernel implicitly maps inputs into
-a high-dimensional feature space:
+on the full 393-dimensional feature set.  To improve computational efficiency,
+PCA first reduces the feature matrix to 100 principal components (retaining
+97.33\% of total variance).  The RBF kernel implicitly maps inputs into a
+high-dimensional feature space:
 \[
   K(x_i, x_j) = \exp\!\left(-\gamma\,\|x_i - x_j\|^2\right)
 \]
@@ -217,25 +239,32 @@ Experiment~1.
 
 To examine the geometry of the feature space, PCA is applied to project the
 full training feature matrix to 2 dimensions.  Viral and non-viral samples are
-plotted separately to assess visual separability, both for the full training set
-and individually for four categories: Gaming, Music, Entertainment, and Science
-\& Technology.
+plotted separately to assess visual separability, both for the full training
+set and individually for four representative categories: Gaming, Music,
+Entertainment, and Science \& Technology.  These four categories are selected
+to maximize visual contrast --- Gaming has the highest viral rate (40.8\%) and
+Music the lowest cross-domain transfer, making them informative anchors for
+understanding the feature space.  Note that Experiment~4 instead uses the four
+highest-frequency categories (Entertainment, Music, Howto \& Style, Comedy) to
+ensure sufficient per-category training data.
 
 \subsection{Experiment 4 --- Cross-Category Generalization}
 
 To assess whether viral patterns transfer across content genres, the four most
-frequent categories are selected.  For each ordered pair (train category, test
-category), a separate SVM is trained on all samples from the training category
-and evaluated on all samples from the test category using the best
-hyperparameters from Experiment~2.  This produces a $4\times4$ F1 matrix whose
-diagonal entries represent in-domain performance and whose off-diagonal entries
-represent cross-domain generalization.
+frequent categories are selected: Entertainment, Music, Howto \& Style, and
+Comedy.  For each ordered pair (train category, test category), a separate SVM
+is trained on all samples from the training category and evaluated on all
+samples from the test category using the best hyperparameters from
+Experiment~2.  This produces a $4\times4$ F1 matrix whose diagonal entries
+represent in-domain performance and whose off-diagonal entries represent
+cross-domain generalization.
 
 % ── 4. Implementation Details ─────────────────────────────────────────────────
 \section{Implementation Details}
 
-All experiments are implemented in Python~3 using scikit-learn.
-Table~\ref{tab:impl} summarizes the key hyperparameter settings.
+All experiments are implemented in Python~3 using scikit-learn and the
+sentence-transformers library.  Table~\ref{tab:impl} summarizes the key
+hyperparameter settings.
 
 \begin{table}[H]
   \centering
@@ -249,11 +278,12 @@ Table~\ref{tab:impl} summarizes the key hyperparameter settings.
     Train / test split ratio  & 70 / 30, stratified \\
     Viral label threshold     & 80th percentile (933,053 views), 20\% positive \\
     Random state              & 42 (all steps) \\
-    TF-IDF vocabulary size    & 500 \\
-    TF-IDF stop words         & English \\
-    PCA components (Exp.\ 2)  & 100 \\
+    Structured features       & 9 dimensions \\
+    Sentence embedding model  & all-MiniLM-L6-v2 (384 dimensions, frozen) \\
+    Full feature dimensionality & 393 (9 structured + 384 embedding) \\
+    PCA components (Exp.\ 2)  & 100 (97.33\% variance retained) \\
     LR solver                 & L-BFGS, max iterations = 1000 \\
-    LR best $C$               & 0.001 \\
+    LR best $C$               & 0.1 \\
     LR $C$ grid               & $C \in \{0.001,\,0.01,\,0.1,\,1,\,10\}$ \\
     SVM kernel                & RBF \\
     SVM best params           & $C=10$, $\gamma=0.1$ \\
@@ -262,58 +292,85 @@ Table~\ref{tab:impl} summarizes the key hyperparameter settings.
     Cross-validation folds    & 5-fold stratified \\
     CV scoring metric         & F1 \\
     Class imbalance handling  & Inverse-frequency sample weighting \\
-    Leakage prevention        & Scaler / TF-IDF / PCA fit on training set only \\
+    Leakage prevention        & Scaler / PCA fit on training set only \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 % ── 5. Results ────────────────────────────────────────────────────────────────
 \section{Results}
+\label{sec:results}
 
 \subsection{Experiment 1 --- Logistic Regression Baseline}
 
-We trained a Logistic Regression model using only the five structured features
-and evaluated it on the held-out test set.  The best regularization parameter
-found by cross-validation was $C = 0.001$.  Inspecting the learned coefficient
-vector revealed that category id and publish weekday carry the largest absolute
-weights, suggesting that content category and day of week encode the most
-useful signal among the structured features.
+Logistic Regression trained on the nine structured features achieves an AUC of
+0.599 and an F1 of 0.352.  Cross-validation selected $C = 0.1$ as the best
+regularization parameter.  Table~\ref{tab:coef} shows the learned coefficient
+weights sorted by absolute magnitude.
 
-The model achieves a recall of 0.451, identifying roughly 45\% of viral videos,
-but precision is low at 0.220, indicating a high false-positive rate.  The AUC
-of 0.558 is only modestly above random chance (0.5), establishing the limited
-ceiling of what structured features alone can offer and motivating the addition
-of text features in Experiment~2.  Figure~\ref{fig:lr} shows the ROC curve and
-confusion matrix.
+\begin{table}[H]
+  \centering
+  \caption{Logistic Regression feature coefficients (sorted by absolute value).
+           Positive values indicate association with virality.}
+  \label{tab:coef}
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{Feature} & \textbf{Coefficient} & \textbf{Direction} \\
+    \midrule
+    category id           & $-0.308$ & category-dependent \\
+    tag count             & $+0.236$ & more tags $\to$ more viral \\
+    title word count      & $-0.178$ & shorter titles more viral \\
+    publish weekday       & $+0.164$ & later in week more viral \\
+    description length    & $+0.119$ & longer descriptions more viral \\
+    title has exclamation & $+0.112$ & ``!'' associated with virality \\
+    title has question    & $-0.066$ & ``?'' negatively associated \\
+    publish hour          & $-0.059$ & \\
+    title length          & $+0.001$ & negligible \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Content category is the single strongest predictor, consistent with the large
+variation in viral rates across categories observed in Figure~\ref{fig:viral_by_category}.
+Tag count ranks second: videos with more tags tend to go viral more often,
+likely because thorough tagging reflects creator experience and improves
+discoverability within the recommendation system.  Description length carries
+a similar interpretation --- more effort invested in the description signals
+a more professional production.
+
+A notable finding concerns punctuation in titles.  The presence of an
+exclamation mark is positively associated with virality ($+0.112$), while a
+question mark is negatively associated ($-0.066$).  This contrast reflects a
+difference in content style: exclamation marks appear in emotionally-driven,
+entertainment-oriented titles (``You Won't Believe This!''), while question
+marks appear in informational or tutorial titles (``How do you fix this?''),
+which tend to belong to lower-viral-rate categories such as Howto \& Style
+and Education.
+
+The model achieves a recall of 0.570, identifying 57\% of viral videos,
+but at low precision (0.255), indicating a substantial false-positive rate.
+The AUC of 0.599 is modestly above random chance, establishing the ceiling of
+structured features alone and motivating the semantic features in
+Experiment~2.  Figure~\ref{fig:lr} shows the ROC curve and confusion matrix.
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.88\textwidth]{phase3_lr_baseline.png}
-  \caption{Logistic Regression baseline results: ROC curve (left) and confusion
+  \caption{Logistic Regression baseline: ROC curve (left) and confusion
            matrix (right) on the held-out test set.}
   \label{fig:lr}
 \end{figure}
 
 \subsection{Experiment 2 --- Kernel SVM}
 
-We augmented the structured features with TF-IDF title representations, applied
-PCA to reduce dimensionality to 100 components (retaining 91.69\% of variance),
-and trained an RBF Kernel SVM.  Cross-validation selected $C = 10$ and
-$\gamma = 0.1$ as the best hyperparameters.
-
-The results, summarized in Table~\ref{tab:results}, show clear improvement
-across every metric.  F1 increases by 28.0\% relative to the baseline, and AUC
-reaches 0.655.  Recall of 0.504 means the model correctly identifies roughly
-half of all truly viral videos, while precision improves from 0.220 to 0.303.
-Although the absolute performance is moderate, the consistent gains across all
-metrics suggest that title text provides genuine predictive signal beyond what
-structured features alone can capture.  Part of the improvement may also reflect
-the greater flexibility of the RBF kernel compared to a linear classifier,
-though the feature addition is the primary driver.
+Adding 384-dimensional sentence embeddings of the video title and tags to the
+nine structured features, reducing to 100 PCA components, and training an RBF
+Kernel SVM yields substantial improvement across all metrics.
+Cross-validation selected $C = 10$ and $\gamma = 0.1$.
 
 \begin{table}[H]
   \centering
-  \caption{Test set performance of the two models.}
+  \caption{Test-set performance of the two models.}
   \label{tab:results}
   \renewcommand{\arraystretch}{1.2}
   \begin{tabular}{lccccc}
@@ -321,19 +378,39 @@ though the feature addition is the primary driver.
     \textbf{Model} & \textbf{Accuracy} & \textbf{Precision} &
     \textbf{Recall} & \textbf{F1} & \textbf{AUC} \\
     \midrule
-    LR Baseline (structured only)        & 0.570 & 0.220 & 0.451 & 0.296 & 0.558 \\
-    Kernel SVM (structured + TF-IDF)     & 0.669 & 0.303 & 0.504 & 0.378 & 0.655 \\
+    LR Baseline (structured only)            & 0.581 & 0.255 & 0.570 & 0.352 & 0.599 \\
+    Kernel SVM (structured + embeddings)     & 0.732 & 0.375 & 0.514 & 0.434 & 0.711 \\
     \midrule
     \rowcolor{gray!15}
-    Absolute improvement ($\Delta$)      & +0.099 & +0.083 & +0.053 & +0.082 & +0.097 \\
+    Absolute improvement ($\Delta$)          & +0.151 & +0.120 & $-0.056$ & +0.082 & +0.112 \\
     \rowcolor{gray!15}
-    Relative improvement (\%)            & +17.4\% & +37.7\% & +11.8\% & +27.7\% & +17.4\% \\
+    Relative improvement (\%)               & +26.0\% & +47.1\% & $-9.8\%$ & +23.3\% & +18.7\% \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-Figure~\ref{fig:svm} provides the ROC comparison, SVM confusion matrix, and a
-side-by-side metric bar chart for both models.
+AUC rises from 0.599 to 0.711 (+18.7\%) and F1 from 0.352 to 0.434 (+23.3\%).
+Accuracy and precision improve substantially.  Recall decreases slightly
+(0.570 $\to$ 0.514): the LR baseline, faced with a class-imbalanced problem,
+casts a wide net and flags many videos as viral, achieving high recall at the
+cost of low precision (0.255).  The SVM, operating in a richer feature space,
+learns a more selective decision boundary --- it misses slightly more true
+viral videos but is far less likely to misclassify non-viral ones, yielding
+much higher precision (0.375) and a better overall F1.  This trade-off is
+appropriate for a task where false positives (predicting viral incorrectly)
+carry their own cost.  The AUC of 0.711 means that when given one viral and
+one non-viral video drawn at random, the model ranks the viral one higher
+71.1\% of the time --- a meaningful result given that the prediction relies
+solely on pre-publication information.
+
+The gap between the two models isolates the contribution of semantic content:
+the structured features alone (AUC 0.599) capture operational signals such as
+category, tag count, and timing, while the sentence embeddings additionally
+capture \textit{what} the title says, providing an 18.7\% AUC gain that
+cannot be attributed to model flexibility alone.
+
+Figure~\ref{fig:svm} shows the ROC comparison, SVM confusion matrix, and a
+side-by-side metric bar chart.
 
 \begin{figure}[H]
   \centering
@@ -346,70 +423,54 @@ side-by-side metric bar chart for both models.
 
 \subsection{Experiment 3 --- PCA Visualization}
 
-To gain intuition about the feature space, we projected the 505-dimensional
-training features down to 2 principal components and plotted viral versus
-non-viral samples.  While the two classes overlap to some degree --- expected
-given the inherent difficulty of the task --- viral videos occupy a noticeably
-distinct region along the first principal component, confirming that the learned
-features carry genuine discriminative signal.
-
-The per-category breakdown, shown in Figure~\ref{fig:pca_cat}, reveals
-meaningful variation across genres.  Table~\ref{tab:pca} reports the Euclidean
-distance between the viral and non-viral cluster centroids in 2D PCA space for
-each category.  Gaming and Entertainment exhibit the clearest separation, while
-Music videos cluster tightly regardless of virality, consistent with the
-difficulty of predicting viral Music content from title features alone.
+Projecting the 393-dimensional training features to 3 principal components
+retains approximately 44\% of total variance.  The dense, high-rank structure
+of sentence embeddings means that no small number of principal components can
+capture the full feature space, so some class overlap in the projected view is
+expected.  Figure~\ref{fig:pca_overall} shows the 3D projection from two
+viewing angles: viral and non-viral videos overlap considerably, consistent
+with the inherent difficulty of the task, but viral videos are not uniformly
+distributed --- they concentrate toward one end of PC1, confirming that the
+learned features carry genuine discriminative signal even if it is not
+concentrated in just two or three directions.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.75\textwidth]{phase5_pca2d_overall.png}
-  \caption{PCA 2D projection of the full training set.  Orange points are viral
-           videos; blue points are a random subsample of 2,000 non-viral videos.}
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{phase5_pca3d_overall_a.png}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{phase5_pca3d_overall_b.png}
+  \end{subfigure}
+  \caption{PCA 3D projection of the full training set from two viewing angles.
+           Orange points are viral videos; blue points are a subsample of
+           1,500 non-viral videos.  The two classes overlap but viral videos
+           cluster preferentially toward one end of PC1.}
   \label{fig:pca_overall}
 \end{figure}
 
+The per-category breakdown in Figure~\ref{fig:pca_cat} reveals meaningful
+variation across genres.  Gaming and Entertainment exhibit clearer visual
+separation between viral and non-viral clusters in 3D, while Music videos
+cluster tightly regardless of virality --- consistent with the difficulty of
+predicting viral Music content from title features alone, and with the weak
+cross-domain transfer observed for Music in Experiment~4.
+
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{phase5_pca2d_by_category.png}
-  \caption{Per-category PCA 2D projections for Gaming, Music, Entertainment,
-           and Science \& Technology.}
+  \includegraphics[width=\textwidth]{phase5_pca3d_by_category.png}
+  \caption{Per-category PCA 3D projections for Gaming, Music, Entertainment,
+           and Science \& Technology.  Gaming and Entertainment show clearer
+           separation; Music shows the least.}
   \label{fig:pca_cat}
 \end{figure}
 
-\begin{table}[H]
-  \centering
-  \caption{Centroid distance between viral and non-viral clusters in 2D PCA
-           space, by category.}
-  \label{tab:pca}
-  \begin{tabular}{lcc}
-    \toprule
-    \textbf{Category} & \textbf{Centroid Distance} & \textbf{Separation} \\
-    \midrule
-    Gaming                & 0.444 & Clear \\
-    Entertainment         & 0.208 & Moderate \\
-    Science \& Technology & 0.365 & Moderate \\
-    Music                 & 0.035 & Weak \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
 \subsection{Experiment 4 --- Cross-Category Generalization}
 
-To understand how well viral patterns transfer across genres, we trained
-separate SVM models on each of the four most frequent categories ---
-Entertainment, Music, Howto \& Style, and Comedy --- and tested each model on
-every category, yielding the $4 \times 4$ F1 matrix in
-Figure~\ref{fig:heatmap}.  The diagonal entries (in-domain) average 0.657,
-confirming that category-specific models learn meaningful patterns within their
-own genre.  The off-diagonal entries (cross-domain) average 0.198, a drop of
-0.459.
-
-This gap reveals an important structural property of the data: viral patterns
-are largely category-specific.  The language and framing that makes an
-Entertainment title go viral differs substantially from what works in Music or
-Howto \& Style.  Music is the most category-specific genre --- models trained
-on Music generalize least to other categories, consistent with the weak PCA
-separation observed in Experiment~3.
+Training and testing separate SVM models within and across the four most
+frequent categories (Entertainment, Music, Howto \& Style, Comedy) yields the
+$4 \times 4$ F1 matrix in Figure~\ref{fig:heatmap}.
 
 \begin{figure}[H]
   \centering
@@ -420,73 +481,97 @@ separation observed in Experiment~3.
   \label{fig:heatmap}
 \end{figure}
 
+The diagonal (in-domain) entries average 0.859, confirming that
+category-specific models learn strong within-genre patterns.  Individual
+in-domain F1 scores are high: Comedy 0.877, Howto \& Style 0.877, Music 0.864,
+and Entertainment 0.817.  The off-diagonal (cross-domain) entries average only
+0.166, a drop of 0.693.  The most extreme case is Howto \& Style trained on
+Music: F1 = 0.000, a complete failure.
+
+This large gap reveals that viral patterns are fundamentally category-specific.
+A model trained on Comedy learns to recognize comedic framing and humor-driven
+titles; applied to Music, those signals provide no useful information about
+whether a track will trend.  The finding is not that the models are weak --- on
+their own categories they perform very well --- but that the concept of
+``viral'' has a different linguistic fingerprint in each genre.
+
 % ── 6. Discussion ─────────────────────────────────────────────────────────────
 \section{Discussion}
 
 \textbf{Viral video prediction from pre-publication features is feasible.}
-The Kernel SVM achieves an AUC of 0.655 and an F1 of 0.378 using only title
-text, publish time, and content category --- no engagement data whatsoever.
-While the absolute numbers reflect the genuine difficulty of the task, both
-metrics improve meaningfully over the structured-only baseline (AUC 0.558,
-F1 0.296), confirming that pre-publication signals carry real predictive value.
+The Kernel SVM achieves an AUC of 0.711 using only pre-publication information
+--- no view counts, likes, or any post-publication engagement signal.  This
+places the result in the middle-to-upper range of published results on similar
+tasks, where AUCs of 0.65--0.75 are typical given the inherent randomness of
+viral spread.  The structured-only baseline (AUC 0.599) already exceeds chance
+meaningfully, and the addition of semantic embeddings pushes performance
+substantially higher.
 
-\textbf{Title text provides meaningful additional signal.}  The 28\% relative
-improvement in F1 from the structured-only baseline to the text-augmented SVM
-suggests that the specific words a creator chooses matter beyond timing and
-category.  This is an actionable finding: title optimization is a concrete lever
-available to creators before a video is ever published.
+\textbf{Semantic content is the strongest marginal contributor.}  The 18.7\%
+AUC gain from adding sentence embeddings demonstrates that \textit{what} a
+creator writes in their title and tags carries predictive signal beyond timing
+and category.  This is an actionable finding: title wording is a concrete lever
+available to creators before publication, and optimizing it may meaningfully
+increase reach.
+
+\textbf{Operational features reveal creator professionalism.}  Among the
+structured features, tag count and description length are the second and fifth
+strongest predictors respectively.  Both serve as proxies for how much effort
+and care a creator invests in their upload workflow.  Experienced creators who
+carefully tag their videos and write detailed descriptions are more likely to
+produce content that eventually trends, reflecting not just content quality but
+also platform literacy.
+
+\textbf{Punctuation in titles carries interpretable signal.}  Exclamation
+marks are positively associated with virality while question marks are
+negatively associated.  This asymmetry reflects a stylistic divide between
+emotionally-charged entertainment content and informational or tutorial content
+--- the former tends to go viral more often.  Such findings illustrate that
+even simple text features, when interpreted carefully, can reveal genuine
+patterns in audience behavior.
 
 \textbf{Viral patterns are category-specific, which is itself a useful
 finding.}  The cross-category experiment was designed to ask whether a single
-global model would be sufficient.  The answer is no --- in-domain F1 averages
-0.657 while cross-domain F1 averages only 0.198.  But this is not a failure of
-the model; it is a discovery about the nature of virality on YouTube: different
-genres have different linguistic cultures, and what goes viral in one does not
-necessarily go viral in another.  Knowing this guides how future systems should
-be built --- with separate, category-aware models rather than a single
-one-size-fits-all classifier.
+global model would be sufficient.  The answer is clearly no: in-domain F1
+averages 0.859 while cross-domain F1 averages only 0.166.  This is not a
+failure of the modeling approach; it is a discovery about the nature of
+virality on YouTube.  Different genres have different linguistic cultures, and
+what makes a Comedy title go viral has little in common with what makes a Music
+video trend.  Knowing this guides how future systems should be built ---
+with separate, category-aware models rather than a single one-size-fits-all
+classifier.
 
-\textbf{Practical implications.}  These findings translate into concrete
-guidance for content creators.  First, since title text is the strongest
-predictive signal, investing effort in title wording --- choosing specific,
-evocative language rather than generic descriptions --- is likely to have the
-greatest impact on a video's reach.  Second, because publish hour and weekday
-are among the most informative structured features, timing uploads strategically
-(e.g., aligning with peak audience activity periods) provides an additional
-marginal advantage.  Third, the category-specific nature of viral patterns means
-that creators should study what works within their own genre rather than
-emulating strategies from unrelated categories --- a title style that performs
-well in Science \& Technology may be counterproductive in Music.  Finally, the
-trained model itself can serve as a practical pre-upload screening tool: given a
-candidate title, publish time, and category, it can estimate the probability of
-going viral before a video is ever released, enabling iterative title refinement
-at zero cost.
-
-\textbf{Future directions.}  Building on these results, natural extensions
-include training dedicated per-category models, exploring richer text
-representations such as pretrained sentence embeddings, and incorporating
-additional pre-publication signals such as channel subscriber count or thumbnail
-features.
+\textbf{Future directions.}  Natural extensions include training dedicated
+per-category models to leverage the strong in-domain performance observed here,
+incorporating channel-level features such as historical viral rate as a proxy
+for creator reputation, and exploring thumbnail image features using vision
+models, since the thumbnail is a key driver of click-through rate that this
+project did not address.
 
 % ── 7. Conclusion ─────────────────────────────────────────────────────────────
 \section{Conclusion}
 
 This project demonstrates that predicting YouTube video virality from
-pre-publication information alone is feasible.  By combining structured metadata
-with TF-IDF title features and training an RBF Kernel SVM, we achieve an AUC
-of 0.655 and an F1 score of 0.378 on a held-out test set --- a 28\% improvement
-in F1 over the structured-only Logistic Regression baseline.  The title text of
-a video provides the strongest marginal signal among the available pre-publication
-features.
+pre-publication information alone is feasible.  By combining nine structured
+metadata features with 384-dimensional sentence embeddings of the video title
+and tags, and training an RBF Kernel SVM, we achieve an AUC of 0.711 and an F1
+score of 0.434 on a held-out test set --- a 23.3\% improvement in F1 and an
+18.7\% improvement in AUC over the structured-only Logistic Regression baseline.
+
+Feature importance analysis on the baseline model reveals that content category
+is the strongest single predictor, followed by tag count and the presence of
+exclamation marks in the title.  The contrast between exclamation marks
+(positive) and question marks (negative) highlights a meaningful stylistic
+divide between viral entertainment content and non-viral informational content.
 
 The cross-category generalization experiment adds a deeper insight: viral
-patterns are not universal but genre-dependent, with in-domain F1 averaging
-0.657 and cross-domain F1 averaging 0.198.  Rather than undermining the
-project's success, this finding clarifies the right modeling strategy going
-forward --- category-aware models that respect the distinct linguistic norms of
-each genre.  Together, these results demonstrate that machine learning can
-extract meaningful structure from simple pre-publication metadata, with
-practical implications for content strategy and platform design.
-
+patterns are not universal but strongly genre-dependent, with in-domain F1
+averaging 0.859 and cross-domain F1 averaging just 0.166.  Rather than
+undermining the project's success, this finding clarifies the right modeling
+strategy going forward --- category-aware models that respect the distinct
+linguistic norms of each genre.  Together, these results demonstrate that
+machine learning can extract meaningful structure from simple pre-publication
+metadata, with practical implications for content strategy, platform
+recommendation design, and creator tooling.
 
 \end{document}

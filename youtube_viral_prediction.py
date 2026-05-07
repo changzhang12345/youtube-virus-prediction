@@ -1,6 +1,6 @@
 """
 YouTube Viral Video Prediction
-Yale CPSC 381/581 Machine Learning Final Project
+Yale CPSC 3180/5180 Introduction to Machine Learning Final Project
 
 Research Question: Can we predict whether a YouTube video will trend
 using only its title (no engagement data)?
@@ -27,16 +27,15 @@ FAST = args.fast
 if FAST:
     print("=== FAST MODE: quick validation run ===\n")
 
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                              f1_score, roc_auc_score, confusion_matrix,
                              roc_curve, classification_report)
 from sklearn.preprocessing import StandardScaler
-from scipy.sparse import hstack, csr_matrix
+from sklearn.svm import SVC
+from sentence_transformers import SentenceTransformer
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -140,10 +139,21 @@ df['publish_hour'] = df['publish_time'].dt.hour
 df['publish_weekday'] = df['publish_time'].dt.weekday  # 0=Monday, 6=Sunday
 df['title_length'] = df['title'].str.len()
 df['title_word_count'] = df['title'].str.split().str.len()
+df['title_has_question'] = df['title'].str.contains(r'\?', regex=True).astype(int)
+df['title_has_exclaim'] = df['title'].str.contains(r'!', regex=False).astype(int)
+df['tag_count'] = df['tags'].fillna('').apply(lambda t: 0 if t in ('', '[none]') else len(t.split('|')))
+df['desc_length'] = df['description'].fillna('').str.len()
 
-structured_cols = ['publish_hour', 'publish_weekday', 'title_length', 'title_word_count', 'category_id']
+structured_cols = ['publish_hour', 'publish_weekday', 'title_length', 'title_word_count',
+                   'category_id', 'title_has_question', 'title_has_exclaim',
+                   'tag_count', 'desc_length']
 print(f"\nNew features sample:")
-print(df[['title', 'publish_hour', 'publish_weekday', 'title_length', 'title_word_count']].head())
+print(df[['title', 'publish_hour', 'publish_weekday', 'title_length',
+          'title_has_question', 'title_has_exclaim', 'tag_count', 'desc_length']].head())
+
+# Text column (must be created before split so df_train/df_test inherit it)
+df['tags_clean'] = df['tags'].fillna('').replace('[none]', '', regex=False).str.replace('|', ' ', regex=False)
+df['text'] = df['title'].astype(str) + ' ' + df['tags_clean']
 
 # Labels
 y = df['viral'].values
@@ -164,26 +174,24 @@ scaler = StandardScaler()
 X_structured_train = scaler.fit_transform(df_train[structured_cols].values)
 X_structured_test = scaler.transform(df_test[structured_cols].values)
 
-# TF-IDF on title: fit on train only
-tfidf = TfidfVectorizer(max_features=500, stop_words='english')
-X_tfidf_train = tfidf.fit_transform(df_train['title'])
-X_tfidf_test = tfidf.transform(df_test['title'])
+print("\nLoading sentence-transformer model (all-MiniLM-L6-v2)...")
+st_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# Full feature matrix: structured + TF-IDF
-X_full_train = hstack([csr_matrix(X_structured_train), X_tfidf_train])
-X_full_test = hstack([csr_matrix(X_structured_test), X_tfidf_test])
+print("Encoding train titles+tags...")
+X_embed_train = st_model.encode(df_train['text'].tolist(), batch_size=64, show_progress_bar=True)
+print("Encoding test titles+tags...")
+X_embed_test = st_model.encode(df_test['text'].tolist(), batch_size=64, show_progress_bar=True)
 
-print(f"\nTF-IDF train shape: {X_tfidf_train.shape}, test shape: {X_tfidf_test.shape}")
-print(f"Structured train shape: {X_structured_train.shape}, test shape: {X_structured_test.shape}")
-print(f"Full train shape: {X_full_train.shape}, test shape: {X_full_test.shape}")
+# Full feature matrix: structured + sentence embeddings
+X_full_train = np.hstack([X_structured_train, X_embed_train])
+X_full_test = np.hstack([X_structured_test, X_embed_test])
 
-print(f"\nTrain size: {X_full_train.shape[0]}, Test size: {X_full_test.shape[0]}")
+print(f"\nEmbedding dim: {X_embed_train.shape[1]}")
+print(f"Structured train shape: {X_structured_train.shape}")
+print(f"Full train shape:       {X_full_train.shape}")
+print(f"Full test shape:        {X_full_test.shape}")
+print(f"\nTrain size: {len(y_train)}, Test size: {len(y_test)}")
 print(f"Train viral rate: {y_train.mean():.2%}, Test viral rate: {y_test.mean():.2%}")
-print(f"\nFinal feature shapes:")
-print(f"  X_structured_train: {X_structured_train.shape}")
-print(f"  X_structured_test:  {X_structured_test.shape}")
-print(f"  X_full_train:       {X_full_train.shape}")
-print(f"  X_full_test:        {X_full_test.shape}")
 
 
 # ============================================================
@@ -273,32 +281,27 @@ print("\nSaved: phase3_lr_baseline.png")
 
 
 # ============================================================
-# PHASE 4: Experiment 2 — Kernel SVM with RBF
+# PHASE 4: Experiment 2 — Kernel SVM (Structured + Embeddings)
 # ============================================================
 print("\n" + "=" * 60)
-print("PHASE 4: Experiment 2 — Kernel SVM (RBF)")
+print("PHASE 4: Experiment 2 — Kernel SVM (Structured + Embeddings)")
 print("=" * 60)
 
-# PCA to reduce dimensionality before SVM
+# PCA to reduce dimensionality before SVM (speeds up training)
 print("Applying PCA (100 components) to full feature matrix...")
 pca = PCA(n_components=100, random_state=42)
-X_full_train_dense = X_full_train.toarray()
-X_full_test_dense  = X_full_test.toarray()
+X_pca_train = pca.fit_transform(X_full_train)
+X_pca_test  = pca.transform(X_full_test)
+print(f"PCA explained variance (100 components): {pca.explained_variance_ratio_.sum():.2%}")
 
-X_pca_train = pca.fit_transform(X_full_train_dense)
-X_pca_test  = pca.transform(X_full_test_dense)
+svm_param_grid = (
+    {'C': [1], 'gamma': [0.1]}
+    if FAST else
+    {'C': [0.1, 1, 10], 'gamma': ['scale', 0.01, 0.1]}
+)
 
-explained_var = pca.explained_variance_ratio_.sum()
-print(f"PCA explained variance (100 components): {explained_var:.2%}")
-
-# GridSearchCV for SVM
-svm_param_grid = {'C': [1], 'gamma': ['scale']} if FAST else {
-    'C':     [0.1, 1, 10],
-    'gamma': ['scale', 0.01, 0.1]
-}
 svm_base = SVC(kernel='rbf', class_weight='balanced', probability=True, random_state=42)
-svm_gs = GridSearchCV(svm_base, svm_param_grid, cv=cv, scoring='f1',
-                      n_jobs=1, verbose=1)
+svm_gs = GridSearchCV(svm_base, svm_param_grid, cv=cv, scoring='f1', n_jobs=1, verbose=1)
 svm_gs.fit(X_pca_train, y_train)
 
 print(f"\nBest SVM parameters: {svm_gs.best_params_}")
@@ -306,14 +309,12 @@ print(f"Best CV F1: {svm_gs.best_score_:.4f}")
 
 best_svm = svm_gs.best_estimator_
 results_svm = evaluate_model(best_svm, X_pca_test, y_test,
-                              "Kernel SVM (Structured + TF-IDF + PCA)")
+                              "Kernel SVM (Structured + Embeddings + PCA)")
 
-# ROC curves
 fpr_svm, tpr_svm, _ = roc_curve(y_test, results_svm['y_prob'])
 
 fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-# ROC comparison
 axes[0].plot(fpr_lr, tpr_lr, color='steelblue', lw=2,
              label=f"LR (AUC={results_lr['auc']:.3f})")
 axes[0].plot(fpr_svm, tpr_svm, color='darkorange', lw=2,
@@ -324,7 +325,6 @@ axes[0].set_ylabel('True Positive Rate')
 axes[0].set_title('ROC Curve Comparison')
 axes[0].legend()
 
-# Confusion matrix — SVM
 sns.heatmap(results_svm['cm'], annot=True, fmt='d', cmap='Oranges',
             xticklabels=['Non-viral','Viral'], yticklabels=['Non-viral','Viral'],
             ax=axes[1])
@@ -332,16 +332,15 @@ axes[1].set_title('Confusion Matrix — Kernel SVM')
 axes[1].set_ylabel('True Label')
 axes[1].set_xlabel('Predicted Label')
 
-# Metrics comparison bar chart
-metrics = ['accuracy', 'precision', 'recall', 'f1', 'auc']
-lr_vals  = [results_lr[m]  for m in metrics]
-svm_vals = [results_svm[m] for m in metrics]
-x = np.arange(len(metrics))
+metrics_list = ['accuracy', 'precision', 'recall', 'f1', 'auc']
+lr_vals  = [results_lr[m]  for m in metrics_list]
+svm_vals = [results_svm[m] for m in metrics_list]
+x = np.arange(len(metrics_list))
 w = 0.35
 axes[2].bar(x - w/2, lr_vals,  w, label='LR Baseline',  color='steelblue', edgecolor='black')
 axes[2].bar(x + w/2, svm_vals, w, label='Kernel SVM',   color='darkorange', edgecolor='black')
 axes[2].set_xticks(x)
-axes[2].set_xticklabels([m.upper() for m in metrics])
+axes[2].set_xticklabels([m.upper() for m in metrics_list])
 axes[2].set_ylim(0, 1)
 axes[2].set_ylabel('Score')
 axes[2].set_title('Model Comparison — All Metrics')
@@ -355,7 +354,6 @@ plt.savefig(f"{OUT_DIR}/phase4_svm_comparison.png", dpi=150)
 plt.close()
 print("\nSaved: phase4_svm_comparison.png")
 
-# Print improvements
 print(f"\nF1 improvement (LR → SVM): {(results_svm['f1'] - results_lr['f1']):.4f} "
       f"({(results_svm['f1'] - results_lr['f1']) / max(results_lr['f1'], 1e-9) * 100:.1f}%)")
 print(f"AUC improvement (LR → SVM): {(results_svm['auc'] - results_lr['auc']):.4f} "
@@ -369,11 +367,14 @@ print("\n" + "=" * 60)
 print("PHASE 5: Experiment 3 — PCA Visualization")
 print("=" * 60)
 
-# PCA to 2D on full training set
-pca2d = PCA(n_components=2, random_state=42)
-X_2d_train = pca2d.fit_transform(X_full_train_dense)
-print(f"PCA 2D explained variance: PC1={pca2d.explained_variance_ratio_[0]:.2%}, "
+# PCA to 3D on full training set
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+pca2d = PCA(n_components=3, random_state=42)
+X_2d_train = pca2d.fit_transform(X_full_train)
+print(f"PCA 3D explained variance: PC1={pca2d.explained_variance_ratio_[0]:.2%}, "
       f"PC2={pca2d.explained_variance_ratio_[1]:.2%}, "
+      f"PC3={pca2d.explained_variance_ratio_[2]:.2%}, "
       f"Total={pca2d.explained_variance_ratio_.sum():.2%}")
 
 # Separate viral / non-viral
@@ -382,58 +383,67 @@ nonviral_mask = (y_train == 0)
 
 # Subsample non-viral for plotting
 rng = np.random.default_rng(42)
-nv_idx = rng.choice(np.where(nonviral_mask)[0], size=min(2000, nonviral_mask.sum()), replace=False)
+nv_idx = rng.choice(np.where(nonviral_mask)[0], size=min(1500, nonviral_mask.sum()), replace=False)
 v_idx  = np.where(viral_mask)[0]
 
-fig, ax = plt.subplots(figsize=(10, 7))
-ax.scatter(X_2d_train[nv_idx, 0], X_2d_train[nv_idx, 1],
-           c='steelblue', alpha=0.3, s=10, label=f'Non-viral (n={len(nv_idx)})')
-ax.scatter(X_2d_train[v_idx, 0],  X_2d_train[v_idx, 1],
-           c='darkorange', alpha=0.5, s=15, label=f'Viral (n={len(v_idx)})')
-ax.set_xlabel(f'PC1 ({pca2d.explained_variance_ratio_[0]:.1%} variance)')
-ax.set_ylabel(f'PC2 ({pca2d.explained_variance_ratio_[1]:.1%} variance)')
-ax.set_title('PCA 2D Projection: Viral vs Non-viral Videos', fontsize=13, fontweight='bold')
-ax.legend(fontsize=11)
-plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/phase5_pca2d_overall.png", dpi=150)
-plt.close()
-print("Saved: phase5_pca2d_overall.png")
+# Plot 3D from two viewing angles
+for elev, azim, suffix in [(20, 45, 'a'), (20, 225, 'b')]:
+    fig = plt.figure(figsize=(11, 8))
+    ax3d = fig.add_subplot(111, projection='3d')
+    ax3d.scatter(X_2d_train[nv_idx, 0], X_2d_train[nv_idx, 1], X_2d_train[nv_idx, 2],
+                 c='steelblue', alpha=0.2, s=8, label=f'Non-viral (n={len(nv_idx)})')
+    ax3d.scatter(X_2d_train[v_idx, 0], X_2d_train[v_idx, 1], X_2d_train[v_idx, 2],
+                 c='darkorange', alpha=0.5, s=12, label=f'Viral (n={len(v_idx)})')
+    ax3d.set_xlabel(f'PC1 ({pca2d.explained_variance_ratio_[0]:.1%})', labelpad=6)
+    ax3d.set_ylabel(f'PC2 ({pca2d.explained_variance_ratio_[1]:.1%})', labelpad=6)
+    ax3d.set_zlabel(f'PC3 ({pca2d.explained_variance_ratio_[2]:.1%})', labelpad=6)
+    ax3d.set_title('PCA 3D Projection: Viral vs Non-viral Videos',
+                   fontsize=13, fontweight='bold')
+    ax3d.view_init(elev=elev, azim=azim)
+    ax3d.legend(fontsize=10)
+    plt.tight_layout()
+    plt.savefig(f"{OUT_DIR}/phase5_pca3d_overall_{suffix}.png", dpi=150)
+    plt.close()
+    print(f"Saved: phase5_pca3d_overall_{suffix}.png")
 
-# Per-category PCA (4 categories)
-# Get original category_id for train indices
+# Per-category PCA (4 categories) — 3D
 df_train = df.iloc[idx_train].copy()
-df_train['_2d_x'] = X_2d_train[:, 0]
-df_train['_2d_y'] = X_2d_train[:, 1]
+df_train['_pc1'] = X_2d_train[:, 0]
+df_train['_pc2'] = X_2d_train[:, 1]
+df_train['_pc3'] = X_2d_train[:, 2]
 df_train['_viral'] = y_train
 
 target_cats = {20: 'Gaming', 10: 'Music', 24: 'Entertainment', 28: 'Science & Technology'}
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-axes = axes.flatten()
+fig = plt.figure(figsize=(16, 12))
 
-for ax, (cat_id, cat_name) in zip(axes, target_cats.items()):
+for idx_cat, (cat_id, cat_name) in enumerate(target_cats.items(), 1):
+    ax3d = fig.add_subplot(2, 2, idx_cat, projection='3d')
     subset = df_train[df_train['category_id'] == cat_id]
     if len(subset) == 0:
-        ax.set_title(f'{cat_name} — no data')
+        ax3d.set_title(f'{cat_name} — no data')
         continue
 
     nv = subset[subset['_viral'] == 0]
     vv = subset[subset['_viral'] == 1]
+    nv_plot = nv.sample(min(400, len(nv)), random_state=42)
 
-    # subsample non-viral
-    nv_plot = nv.sample(min(500, len(nv)), random_state=42)
-    ax.scatter(nv_plot['_2d_x'], nv_plot['_2d_y'],
-               c='steelblue', alpha=0.3, s=10, label=f'Non-viral ({len(nv)})')
-    ax.scatter(vv['_2d_x'], vv['_2d_y'],
-               c='darkorange', alpha=0.6, s=15, label=f'Viral ({len(vv)})')
-    ax.set_title(f'{cat_name} (cat_id={cat_id})', fontweight='bold')
-    ax.set_xlabel('PC1')
-    ax.set_ylabel('PC2')
-    ax.legend(fontsize=8)
+    ax3d.scatter(nv_plot['_pc1'], nv_plot['_pc2'], nv_plot['_pc3'],
+                 c='steelblue', alpha=0.25, s=8, label=f'Non-viral ({len(nv)})')
+    ax3d.scatter(vv['_pc1'], vv['_pc2'], vv['_pc3'],
+                 c='darkorange', alpha=0.6, s=12, label=f'Viral ({len(vv)})')
+    ax3d.set_title(f'{cat_name}', fontweight='bold', fontsize=10)
+    ax3d.set_xlabel('PC1', fontsize=7, labelpad=2)
+    ax3d.set_ylabel('PC2', fontsize=7, labelpad=2)
+    ax3d.set_zlabel('PC3', fontsize=7, labelpad=2)
+    ax3d.tick_params(labelsize=6)
+    ax3d.legend(fontsize=7)
+    ax3d.view_init(elev=20, azim=45)
 
-plt.suptitle('PCA 2D by Category: Viral vs Non-viral', fontsize=14, fontweight='bold', y=1.01)
+plt.suptitle('PCA 3D by Category: Viral vs Non-viral', fontsize=14, fontweight='bold')
 plt.tight_layout()
-plt.savefig(f"{OUT_DIR}/phase5_pca2d_by_category.png", dpi=150, bbox_inches='tight')
+plt.savefig(f"{OUT_DIR}/phase5_pca3d_by_category.png", dpi=150, bbox_inches='tight')
 plt.close()
+print("Saved: phase5_pca3d_by_category.png")
 print("Saved: phase5_pca2d_by_category.png")
 
 
@@ -449,19 +459,14 @@ top4_cats = df['category_id'].value_counts().head(4).index.tolist()
 top4_names = {cid: cat_map.get(cid, f'cat_{cid}') for cid in top4_cats}
 print(f"Top 4 categories: {top4_names}")
 
-# Build dense full feature matrix for all samples
-X_full_dense = np.vstack([X_full_train_dense,
-                           X_full_test_dense])  # shape: (all_train+test, n_features)
-
-# Actually, we need X_full for the whole df. Let's rebuild it properly.
-X_full_all_structured = scaler.transform(df[structured_cols].values)
-X_tfidf_all = tfidf.transform(df['title'])
-X_full_all = hstack([csr_matrix(X_full_all_structured), X_tfidf_all])
-y_all = df['viral'].values
+# Encode all texts for the full dataset, then apply PCA (fit already done on train)
+print("\nEncoding all texts for cross-category analysis...")
+X_embed_all = st_model.encode(df['text'].tolist(), batch_size=64, show_progress_bar=True)
+X_structured_all = scaler.transform(df[structured_cols].values)
+X_full_all = np.hstack([X_structured_all, X_embed_all])
+X_pca_all  = pca.transform(X_full_all)
+y_all   = df['viral'].values
 cat_all = df['category_id'].values
-
-# PCA on full dataset (fit already done on train, transform all)
-X_pca_all = pca.transform(X_full_all.toarray())
 
 # Use best SVM params for all cross-category experiments
 best_C     = svm_gs.best_params_['C']
@@ -559,7 +564,7 @@ print("\n" + "=" * 80)
 print(f"{'Model':<35} {'Features':<25} {'Acc':>6} {'Prec':>6} {'Rec':>6} {'F1':>6} {'AUC':>6}")
 print("=" * 80)
 for r in [results_lr, results_svm]:
-    feat = "Structured" if "LR" in r['model_name'] else "Struct+TF-IDF"
+    feat = "Structured" if "LR" in r['model_name'] else "Struct+Embeddings"
     print(f"{r['model_name']:<35} {feat:<25} "
           f"{r['accuracy']:>6.3f} {r['precision']:>6.3f} "
           f"{r['recall']:>6.3f} {r['f1']:>6.3f} {r['auc']:>6.3f}")
